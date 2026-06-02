@@ -1,10 +1,10 @@
 import sys, math
 from PySide6.QtCore import Qt, QPointF
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QBrush, QPolygonF, QCursor
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QBrush, QPolygonF, QCursor, QImage
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
     QPushButton, QComboBox, QLabel, QSlider, QColorDialog,
-    QGraphicsView, QGraphicsScene, QGraphicsPolygonItem, QGraphicsPathItem,
+    QGraphicsView, QGraphicsScene, QGraphicsPolygonItem, QGraphicsPathItem, QFileDialog
 )
 
 W, H = 1000, 600
@@ -14,13 +14,19 @@ CURSORS = {"pen": Qt.CrossCursor, "shape": Qt.CrossCursor, "move": Qt.OpenHandCu
            "fill": Qt.PointingHandCursor, "delete": Qt.ForbiddenCursor}
 
 
-# tentukan garis
+# Fungsi untuk menghasilkan titik-titik koordinat (polygon) berdasarkan jenis bentuk
 def make_polygon(shape, x1, y1, x2, y2):
     def oval(circle=False):
         cx, cy = (x1+x2)/2, (y1+y2)/2
         r = min(abs(x2-x1), abs(y2-y1))/2 if circle else None
         rx = ry = r if circle else (abs(x2-x1)/2, abs(y2-y1)/2)
-        if not circle: rx, ry = abs(x2-x1)/2, abs(y2-y1)/2
+        # Sesudah (bersih)
+        if circle:
+            r = min(abs(x2-x1), abs(y2-y1)) / 2
+            rx = ry = r
+        else:
+            rx = abs(x2-x1) / 2
+            ry = abs(y2-y1) / 2        
         return [QPointF(cx + rx*math.cos(2*math.pi*i/36), cy + ry*math.sin(2*math.pi*i/36)) for i in range(36)]
 
     if shape == "Persegi":
@@ -35,7 +41,7 @@ def make_polygon(shape, x1, y1, x2, y2):
     }
     return QPolygonF(pts[shape])
 
-# set kanvas  
+# Custom QGraphicsView untuk menangani event mouse pada area kanvas dan meneruskannya ke App
 class CanvasView(QGraphicsView):
     def __init__(self, app, scene):
         super().__init__(scene)
@@ -64,6 +70,7 @@ class VectorPaintApp(QWidget):
         self.view.setCursor(QCursor(CURSORS["pen"]))
         self._build_ui()
 
+    # Membangun antarmuka pengguna (toolbar dan elemen-elemennya)
     def _build_ui(self):
         bar = QHBoxLayout()
 
@@ -102,7 +109,8 @@ class VectorPaintApp(QWidget):
         g = QGroupBox("Edit"); gl = QHBoxLayout(g)
         for label, action in [("Isi Warna", lambda: self.set_tool("fill")),
                                ("Hapus Objek", lambda: self.set_tool("delete")),
-                               ("Bersihkan", self.scene.clear)]:
+                               ("Bersihkan", self.scene.clear),
+                               ("Simpan", self.save_image)]:
             b = QPushButton(label); b.clicked.connect(action); gl.addWidget(b)
         bar.addWidget(g)
         bar.addStretch(1)
@@ -115,6 +123,24 @@ class VectorPaintApp(QWidget):
     def set_tool(self, tool):
         self.tool = tool
         self.view.setCursor(QCursor(CURSORS.get(tool, Qt.CrossCursor)))
+
+    def save_image(self):
+        # Membuka dialog untuk menyimpan file dengan format jpg/jpeg
+        file_path, _ = QFileDialog.getSaveFileName(self, "Simpan Gambar", "", "JPEG Image (*.jpg *.jpeg)")
+        if file_path:
+            # Membuat image kosong sebesar ukuran canvas
+            rect = self.scene.sceneRect()
+            image = QImage(rect.size().toSize(), QImage.Format_ARGB32)
+            image.fill(Qt.white) # Beri background putih
+            
+            # Render/lukis isi scene ke dalam QImage tersebut
+            painter = QPainter(image)
+            painter.setRenderHint(QPainter.Antialiasing)
+            self.scene.render(painter)
+            painter.end()
+            
+            # Simpan gambar ke file
+            image.save(file_path)
 
     def _pick_color(self, title, initial=None):
         c = QColorDialog.getColor(initial or QColor("#000000"), self, title)
@@ -143,46 +169,65 @@ class VectorPaintApp(QWidget):
         if item: item.setTransformOriginPoint(item.boundingRect().center())
     
 
+    # Logika saat tombol mouse ditekan di kanvas
     def on_press(self, pos):
         self.press_pos = self.drag_pos = pos
+        
         if self.tool == "pen":
+            # Mulai menggambar garis bebas (pen path)
             self.active_path = QPainterPath(pos)
             self.active_item = QGraphicsPathItem(self.active_path)
             self.active_item.setPen(self._pen())
             self.scene.addItem(self.active_item)
         elif self.tool == "shape":
+            # Membuat item sementara untuk preview bentuk yang sedang ditarik
             self.preview_item = QGraphicsPolygonItem()
             self.preview_item.setPen(self._pen(True)); self.preview_item.setBrush(self._brush())
             self.scene.addItem(self.preview_item)
         elif self.tool in ("move", "scale", "rotate"):
+            # Memilih objek yang diklik untuk ditransformasi dan mengatur titik tengahnya
             self.active_item = self._item_at(pos); self._set_origin(self.active_item)
         elif self.tool == "fill":
+            # Mengisi warna pada objek yang diklik
             item = self._item_at(pos)
             if item and hasattr(item, "setBrush"): item.setBrush(self._brush())
         elif self.tool == "delete":
+            # Menghapus objek yang diklik dari scene
             item = self._item_at(pos)
             if item: self.scene.removeItem(item)
 
+    # Logika saat mouse diseret (drag) di kanvas
     def on_drag(self, pos):
         if self.tool == "pen" and self.active_item:
+            # Melanjutkan garis gambar bebas mengikuti posisi kursor
             self.active_path.lineTo(pos); self.active_item.setPath(self.active_path)
         elif self.tool == "shape" and self.preview_item:
+            # Memperbarui bentuk dan ukuran preview saat mouse ditarik
             self.preview_item.setPolygon(make_polygon(self.shape_combo.currentText(), self.press_pos.x(), self.press_pos.y(), pos.x(), pos.y()))
         elif self.tool == "move" and self.active_item:
+            # Menggeser posisi objek sesuai dengan jarak drag mouse
             self.active_item.moveBy(pos.x()-self.drag_pos.x(), pos.y()-self.drag_pos.y())
         elif self.tool == "scale" and self.active_item:
+            # Mengubah skala (ukuran) objek berdasarkan pergerakan horizontal mouse
             f = 1.0 + (pos.x()-self.drag_pos.x())*0.005
             if f > 0: self._set_origin(self.active_item); self.active_item.setScale(self.active_item.scale()*f)
         elif self.tool == "rotate" and self.active_item:
+            # Memutar objek berdasarkan pergerakan horizontal mouse
             self._set_origin(self.active_item)
             self.active_item.setRotation(self.active_item.rotation() + (pos.x()-self.drag_pos.x())*0.4)
+        
+        # Simpan posisi saat ini untuk referensi perhitungan drag berikutnya
         self.drag_pos = pos
 
+    # Logika saat tombol mouse dilepas
     def on_release(self, pos):
         if self.tool == "shape" and self.preview_item:
+            # Menyelesaikan gambar bentuk, menetapkan pen/brush, dan menghapus item preview sementara
             poly = make_polygon(self.shape_combo.currentText(), self.press_pos.x(), self.press_pos.y(), pos.x(), pos.y())
             item = QGraphicsPolygonItem(poly); item.setPen(self._pen()); item.setBrush(self._brush())
             self.scene.addItem(item); self.scene.removeItem(self.preview_item); self.preview_item = None
+        
+        # Reset state penahan objek aktif
         self.active_item = self.active_path = None
 
 
