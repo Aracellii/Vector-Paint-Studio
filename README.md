@@ -2,6 +2,8 @@
 
 Project Grafkom is a Python and PySide6 desktop application for drawing simple vector objects.
 
+![Project Grafkom preview](assets/readme-preview.svg)
+
 ## Fedora Installation
 
 Run this from the `projectGrafkom` directory:
