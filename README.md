@@ -1,6 +1,6 @@
-# Project Grafkom
+# Vector-Paint-Studio
 
-Project Grafkom is a Python and PySide6 desktop application for drawing simple vector objects.
+Vector-Paint-Studio is a Python and PySide6 desktop application for drawing simple vector objects.
 
 ![Project Grafkom preview](assets/readme-preview.svg)
 
